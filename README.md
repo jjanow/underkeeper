@@ -127,7 +127,10 @@ editing them.
 
 ### Releasing
 
-Push a tag `vX.Y.Z` whose version matches `version` in `Cargo.toml`. CI builds
+Bump `version` in `Cargo.toml`, commit, and push the commit together with a tag
+`vX.Y.Z` that matches it (`git push origin main vX.Y.Z`). Pushes to `main` only
+run the tests; the full three-platform build runs for tags, pull requests and
+manual runs, so a release is built once. CI builds
 all three platforms and publishes a GitHub release with
 `Underkeeper-windows-x64.exe`, `underkeeper-linux-x64.tar.gz` and
 `Underkeeper-macos-universal.zip`. The release job fails if the tag and

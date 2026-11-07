@@ -20,6 +20,9 @@ jobs:
 
   build:
     needs: test
+    # Pushes to main only run the tests; the full three-platform build runs for tags
+    # (releases), pull requests and manual runs, so a release isn't built twice.
+    if: github.event_name != 'push' || startsWith(github.ref, 'refs/tags/')
     strategy:
       fail-fast: false
       matrix:
