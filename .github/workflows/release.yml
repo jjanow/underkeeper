@@ -14,7 +14,7 @@ jobs:
   test:
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo test
 
@@ -32,7 +32,7 @@ jobs:
             name: macos-universal
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.os == 'macos-latest' && 'x86_64-apple-darwin,aarch64-apple-darwin' || '' }}
@@ -68,7 +68,7 @@ jobs:
           codesign --force --deep -s - dist/Underkeeper.app
           cd dist && ditto -c -k --keepParent Underkeeper.app Underkeeper-macos-universal.zip && rm -rf Underkeeper.app
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: underkeeper-${{ matrix.name }}
           path: dist/*
@@ -78,7 +78,7 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           path: artifacts
       - name: Package
@@ -87,7 +87,7 @@ jobs:
           cp artifacts/underkeeper-windows-x64/Underkeeper.exe out/Underkeeper-windows-x64.exe
           tar -C artifacts/underkeeper-linux-x64 -czf out/underkeeper-linux-x64.tar.gz underkeeper
           cp artifacts/underkeeper-macos-universal/Underkeeper-macos-universal.zip out/
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v3
         with:
           files: out/*
           generate_release_notes: true
