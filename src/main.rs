@@ -1,6 +1,7 @@
 #![cfg_attr(windows, windows_subsystem = "windows")] // no console window on Windows
 
 mod app;
+mod classchange;
 mod dft;
 mod gamedata;
 mod paths;

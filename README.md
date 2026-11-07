@@ -70,7 +70,17 @@ Notes:
 - Attributes are the hero's **base** values. Gear such as a Ring of Wisdom adds on top in game.
 - Maximum health, mana and stamina are calculated by the game from class, level
   and attributes, so they aren't stored in the save. Raising Endurance or Wisdom raises them.
-- Changing class replaces the hero's skill list with the new class's skills.
+- **Changing class** works like re-rolling the hero as the new class, and shows
+  what will change before applying it:
+  - The skill list becomes the new class's skills. You pick the starting skill
+    (for a Voidcaller, the active aura). Free class skills are added (a Paladin's
+    Stun Undead, a Voidcaller's three auras).
+  - Every skill level earned beyond the starting ones is refunded as skill points.
+  - The new class's main attribute is raised to its starting minimum if it's
+    lower (e.g. a new Thief gets at least 8 DEX).
+  - Equipped gear locked to another class goes to the party inventory.
+  - Optionally, the new class's starting items are added to the inventory.
+  - Class-only state (Paladin zeal, Voidcaller aura) is reset.
 
 ## Building from source
 

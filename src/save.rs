@@ -280,23 +280,147 @@ impl SaveFile {
         }
     }
 
-    /// Replace the hero's skill list with `skills` (keeping levels of skills
-    /// that are kept). Used when changing class.
-    pub fn reset_skills(&mut self, h: usize, skills: &[String]) {
-        let current: Vec<(String, i32)> = self.skills(h);
+    /// Replace the hero's skill list with exactly `skills` (id, level),
+    /// cooldowns reset.
+    pub fn set_skill_list(&mut self, h: usize, skills: &[(String, i32)]) {
         let Some(p) = self.hero_list_pos(h, "skill_states") else {
             return;
         };
         if let Some(list) = walk_mut(&mut self.doc.root, &p) {
             list.clear();
         }
-        for s in skills {
-            let lvl = current
-                .iter()
-                .find(|(id, _)| id == s)
-                .map(|(_, l)| *l)
-                .unwrap_or(0);
-            self.set_skill_level(h, s, lvl);
+        for (id, lvl) in skills {
+            self.set_skill_level(h, id, *lvl);
+        }
+    }
+
+    /// Remove a named field from the hero, if present.
+    pub fn remove_hero_key(&mut self, h: usize, name: &str) {
+        let (Some(p), Some(k)) = (self.hero_pos(h), self.doc.find_str(name)) else {
+            return;
+        };
+        if let Some(t) = walk_mut(&mut self.doc.root, &p) {
+            t.retain(|e| e.key != Key::Name(k));
+        }
+    }
+
+    /// Equipped items as (slot, item id). Slots are sparse array keys.
+    pub fn equipped(&self, h: usize) -> Vec<(u32, String)> {
+        let Some(p) = self.hero_list_pos(h, "items") else {
+            return Vec::new();
+        };
+        let Some(list) = walk(&self.doc.root, &p) else {
+            return Vec::new();
+        };
+        list.iter()
+            .filter_map(|e| match e.key {
+                Key::Index(slot) => Some((slot, get_str(&self.doc, table(e)?, "def_name")?)),
+                Key::Name(_) => None,
+            })
+            .collect()
+    }
+
+    /// Take the item out of equipment slot `slot` and put it in the party
+    /// inventory. Other slots keep their keys (the key is the slot).
+    pub fn unequip_to_inventory(&mut self, h: usize, slot: u32, stackable: bool) {
+        let Some(p) = self.hero_list_pos(h, "items") else {
+            return;
+        };
+        let Some(list) = walk_mut(&mut self.doc.root, &p) else {
+            return;
+        };
+        let Some(i) = list.iter().position(|e| e.key == Key::Index(slot)) else {
+            return;
+        };
+        let Value::Table(item) = list.remove(i).value else {
+            return;
+        };
+        let Some(id) = get_str(&self.doc, &item, "def_name") else {
+            return;
+        };
+        if stackable {
+            self.add_to_inventory(&id, 1, true);
+            return;
+        }
+        let mut item = item;
+        if pos_of(&self.doc, &item, "count").is_none() {
+            item.push(new_int_entry(&mut self.doc, "count", 1));
+        }
+        if let Some(ip) = self.inventory_pos() {
+            push_list(&mut self.doc, &ip, item);
+        }
+    }
+
+    fn inventory_pos(&mut self) -> Option<Vec<usize>> {
+        let mut p = self.party_pos()?;
+        if pos_of(&self.doc, walk(&self.doc.root, &p)?, "inventory").is_none() {
+            let k = self.doc.intern("inventory");
+            walk_mut(&mut self.doc.root, &p)?
+                .push(Entry::new(Key::Name(k), Value::Table(Vec::new())));
+        }
+        p.push(pos_of(&self.doc, walk(&self.doc.root, &p)?, "inventory")?);
+        Some(p)
+    }
+
+    /// (item id, count) for every party inventory entry.
+    #[cfg(test)]
+    pub fn inventory(&self) -> Vec<(String, i32)> {
+        let Some(mut p) = self.party_pos() else {
+            return Vec::new();
+        };
+        let Some(i) = walk(&self.doc.root, &p).and_then(|t| pos_of(&self.doc, t, "inventory"))
+        else {
+            return Vec::new();
+        };
+        p.push(i);
+        walk(&self.doc.root, &p)
+            .map(|l| {
+                l.iter()
+                    .filter_map(|e| {
+                        let t = table(e)?;
+                        Some((
+                            get_str(&self.doc, t, "def_name")?,
+                            get_int(&self.doc, t, "count").unwrap_or(1),
+                        ))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// Add `count` of an item to the party inventory: onto an existing stack
+    /// if it stacks, otherwise as separate entries.
+    pub fn add_to_inventory(&mut self, id: &str, count: i32, stackable: bool) {
+        let Some(mut p) = self.inventory_pos() else {
+            return;
+        };
+        if stackable {
+            let existing = walk(&self.doc.root, &p).and_then(|l| {
+                l.iter().position(|e| {
+                    table(e)
+                        .and_then(|t| get_str(&self.doc, t, "def_name"))
+                        .as_deref()
+                        == Some(id)
+                })
+            });
+            if let Some(i) = existing {
+                let have = walk(&self.doc.root, &p)
+                    .and_then(|l| table(&l[i]))
+                    .and_then(|t| get_int(&self.doc, t, "count"))
+                    .unwrap_or(1);
+                p.push(i);
+                set_int(&mut self.doc, &p, "count", have + count);
+                return;
+            }
+        }
+        let (n, each) = if stackable { (1, count) } else { (count, 1) };
+        for _ in 0..n {
+            let entry = vec![
+                new_str_entry(&mut self.doc, "def_name", id),
+                new_int_entry(&mut self.doc, "count", each),
+                new_int_entry(&mut self.doc, "newly_picked", 1),
+            ];
+            push_list(&mut self.doc, &p, entry);
         }
     }
 

@@ -1,3 +1,4 @@
+use crate::classchange;
 use crate::dft::{Doc, Entry, Key, Value};
 use crate::gamedata::{GameData, ItemReq, prettify};
 use crate::paths::{self, SaveDir};
@@ -17,6 +18,14 @@ enum Tab {
     Skills,
     Gear,
     Advanced,
+}
+
+/// A class change waiting for the user to confirm it.
+struct PendingClass {
+    hero: usize,
+    class: String,
+    starter: String,
+    give_kit: bool,
 }
 
 struct Status {
@@ -39,6 +48,7 @@ pub struct App {
     gear_unmet_only: bool,
     gear_class_only: bool,
     trait_pick: String,
+    class_change: Option<PendingClass>,
     status: Option<Status>,
     pending_open: Option<PathBuf>,
     confirm_discard: bool,
@@ -197,6 +207,7 @@ impl App {
             gear_unmet_only: false,
             gear_class_only: false,
             trait_pick: String::new(),
+            class_change: None,
             status: None,
             pending_open: None,
             confirm_discard: false,
@@ -223,6 +234,15 @@ impl App {
                 .ok()
                 .and_then(|h| h.parse().ok())
                 .unwrap_or(0);
+            if let Ok(class) = std::env::var("UNDERKEEPER_CLASS") {
+                let starter = app.gd.starter_choices(&class).first().map(|k| k.id.clone());
+                app.class_change = Some(PendingClass {
+                    hero: app.hero,
+                    starter: starter.unwrap_or_default(),
+                    class,
+                    give_kit: true,
+                });
+            }
         }
         if let Some(custom) = load_setting("save_dir").map(PathBuf::from)
             && custom.is_dir()
@@ -282,6 +302,7 @@ impl App {
     }
 
     fn open(&mut self, path: PathBuf) {
+        self.class_change = None;
         match SaveFile::open(&path) {
             Ok(f) => {
                 if f.hero_count() == 0 {
@@ -634,6 +655,156 @@ impl App {
         });
     }
 
+    fn class_change_dialog(&mut self, ctx: &egui::Context) {
+        let (Some(pc), Some(s)) = (&mut self.class_change, &mut self.save) else {
+            self.class_change = None;
+            return;
+        };
+        let gd = &self.gd;
+        let h = pc.hero;
+        if h >= s.hero_count() {
+            self.class_change = None;
+            return;
+        }
+        let name = s.hero_str(h, "name").unwrap_or_default();
+        let old = gd.display(&s.hero_str(h, "class").unwrap_or_default());
+        let new = gd.display(&pc.class);
+        let mut close = false;
+        let mut applied = false;
+        egui::Window::new(format!("Make {name} a {new}?"))
+            .collapsible(false)
+            .resizable(false)
+            .anchor(egui::Align2::CENTER_CENTER, Vec2::ZERO)
+            .show(ctx, |ui| {
+                ui.set_max_width(460.0);
+                let choices = gd.starter_choices(&pc.class);
+                if !choices.is_empty() {
+                    let label = if pc.class == "voidcaller" {
+                        "Active aura"
+                    } else {
+                        "Starting skill"
+                    };
+                    ui.horizontal(|ui| {
+                        ui.label(label);
+                        egui::ComboBox::from_id_salt("starter")
+                            .selected_text(gd.display(&pc.starter))
+                            .show_ui(ui, |ui| {
+                                for k in &choices {
+                                    ui.selectable_value(
+                                        &mut pc.starter,
+                                        k.id.clone(),
+                                        gd.display(&k.id),
+                                    );
+                                }
+                            });
+                    });
+                    ui.checkbox(&mut pc.give_kit, format!("Add the {new} starting items"));
+                    ui.add_space(6.0);
+                }
+
+                let plan = classchange::plan(s, gd, h, &pc.class, &pc.starter, pc.give_kit);
+                let mut lines: Vec<String> = Vec::new();
+                if plan.class_only {
+                    lines.push(
+                        "Game data wasn't found, so only the class is changed. \
+                         Skills, gear and items are left as they are."
+                            .into(),
+                    );
+                } else {
+                    let free: Vec<String> = gd
+                        .free_skills(&pc.class)
+                        .iter()
+                        .filter(|id| **id != pc.starter)
+                        .map(|id| gd.display(id))
+                        .collect();
+                    let mut sk = format!(
+                        "{old} skills are replaced by {new} skills: {} at level 1",
+                        gd.display(&pc.starter)
+                    );
+                    if !free.is_empty() {
+                        sk += &format!(", plus {} (free for every {new})", free.join(", "));
+                    }
+                    lines.push(sk + ".");
+                    lines.push(format!(
+                        "Skill points: {} -> {} (levels earned in {old} skills are refunded).",
+                        plan.skill_points_before, plan.skill_points_after
+                    ));
+                    if let Some((field, from, to)) = &plan.attr_raise {
+                        let short = ATTRS
+                            .iter()
+                            .find(|a| a.0 == field)
+                            .map_or(field.as_str(), |a| a.2);
+                        lines.push(format!(
+                            "{short} {from} -> {to}, the lowest a new {new} starts with."
+                        ));
+                    }
+                    for (_, id) in &plan.unequip {
+                        lines.push(format!(
+                            "{} can't be used by a {new}; it goes to the party inventory.",
+                            gd.display(id)
+                        ));
+                    }
+                    if !plan.kit.is_empty() || plan.kit_coins > 0 {
+                        let mut items: Vec<String> = plan
+                            .kit
+                            .iter()
+                            .map(|(id, n)| {
+                                if *n > 1 {
+                                    format!("{n}× {}", gd.display(id))
+                                } else {
+                                    gd.display(id)
+                                }
+                            })
+                            .collect();
+                        if plan.kit_coins > 0 {
+                            items.push(format!("{} coins", plan.kit_coins));
+                        }
+                        lines.push(format!("Added to the inventory: {}.", items.join(", ")));
+                    } else if pc.give_kit {
+                        lines.push(format!("The game has no starting items for a {new}."));
+                    }
+                    if s.hero_str(h, "class").as_deref() == Some("paladin") {
+                        lines.push("Zeal is reset.".into());
+                    }
+                }
+                for l in lines {
+                    ui.label(format!("• {l}"));
+                }
+                ui.label(
+                    RichText::new(
+                        "Health, mana and stamina maximums are recalculated by the game.",
+                    )
+                    .small()
+                    .weak(),
+                );
+                ui.add_space(6.0);
+                ui.horizontal(|ui| {
+                    if ui
+                        .add(
+                            egui::Button::new(
+                                RichText::new(format!("Change to {new}")).color(Color32::WHITE),
+                            )
+                            .fill(ACCENT_DARK),
+                        )
+                        .clicked()
+                    {
+                        classchange::apply(s, gd, h, &plan);
+                        applied = true;
+                        close = true;
+                    }
+                    if ui.button("Cancel").clicked() {
+                        close = true;
+                    }
+                });
+            });
+        if close {
+            self.class_change = None;
+        }
+        if applied {
+            self.set_status(format!("{name} is now a {new}. Save to keep it."), false);
+        }
+    }
+
     fn editor(&mut self, ui: &mut egui::Ui) {
         let Some(s) = &mut self.save else { return };
         let gd = &self.gd;
@@ -726,7 +897,7 @@ impl App {
         egui::ScrollArea::vertical()
             .auto_shrink([false, false])
             .show(ui, |ui| match self.tab {
-                Tab::Stats => stats_tab(ui, s, gd, h, &mut self.sync_exp),
+                Tab::Stats => stats_tab(ui, s, gd, h, &mut self.sync_exp, &mut self.class_change),
                 Tab::Skills => skills_tab(ui, s, gd, h, &mut self.trait_pick),
                 Tab::Gear => gear_tab(
                     ui,
@@ -770,7 +941,14 @@ fn int_row(
     ui.end_row();
 }
 
-fn stats_tab(ui: &mut egui::Ui, s: &mut SaveFile, gd: &GameData, h: usize, sync_exp: &mut bool) {
+fn stats_tab(
+    ui: &mut egui::Ui,
+    s: &mut SaveFile,
+    gd: &GameData,
+    h: usize,
+    sync_exp: &mut bool,
+    class_change: &mut Option<PendingClass>,
+) {
     ui.add_space(4.0);
     ui.columns(2, |cols| {
         // ---- Left column: identity + attributes ----
@@ -807,22 +985,22 @@ fn stats_tab(ui: &mut egui::Ui, s: &mut SaveFile, gd: &GameData, h: usize, sync_
                         })
                         .response
                         .on_hover_text(
-                            "Changing class swaps the skill list to the new class's skills.",
+                            "Change class: new skills (spent skill points are refunded), \
+                             class gear moved to the inventory, starting items added. \
+                             You'll see what changes before anything is applied.",
                         );
                     if new_class != class {
-                        s.set_hero_str(h, "class", &new_class);
-                        let skills: Vec<String> = gd
-                            .skills
-                            .iter()
-                            .filter(|k| k.class == new_class)
+                        let starter = gd
+                            .starter_choices(&new_class)
+                            .first()
                             .map(|k| k.id.clone())
-                            .collect();
-                        if !skills.is_empty() {
-                            s.reset_skills(h, &skills);
-                            if let Some(first) = skills.first() {
-                                s.set_hero_str(h, "selected_skill", first);
-                            }
-                        }
+                            .unwrap_or_default();
+                        *class_change = Some(PendingClass {
+                            hero: h,
+                            class: new_class,
+                            starter,
+                            give_kit: true,
+                        });
                     }
                     ui.end_row();
 
@@ -1455,6 +1633,8 @@ impl eframe::App for App {
                     self.welcome(ui);
                 }
             });
+
+        self.class_change_dialog(ui.ctx());
 
         if self.confirm_discard {
             egui::Window::new("Discard changes?")

@@ -3,7 +3,7 @@
 //! Underkeep install. Nothing from the game is bundled with this tool.
 
 use crate::dft::{Doc, Entry, Key, Value};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
 
 /// A simplified, owned view of a DfT tree, convenient for read-only lookups.
@@ -79,6 +79,7 @@ pub struct SkillInfo {
     pub class: String,
     pub max_level: i32,
     pub req_class_level: i32,
+    pub is_passive: bool,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -103,6 +104,14 @@ pub struct GameData {
     /// Total experience needed to reach level index+1.
     pub exp_levels: Vec<i32>,
     pub text: HashMap<String, String>,
+    /// Class -> (attribute field, starting minimum), e.g. paladin -> ("base_str", 7).
+    pub class_main: HashMap<String, (String, i32)>,
+    /// `starting_equipment` rows: ("class race skill" selector, item spec).
+    pub starting_equipment: Vec<(String, String)>,
+    /// Named item pools (`drop_lists`), used by specs like `some_bones:3`.
+    pub drop_lists: HashMap<String, Vec<String>>,
+    /// Items that stack in the inventory.
+    pub stackable: HashSet<String>,
 }
 
 impl Default for GameData {
@@ -129,6 +138,10 @@ impl Default for GameData {
             items: Vec::new(),
             exp_levels: Vec::new(),
             text: HashMap::new(),
+            class_main: HashMap::new(),
+            starting_equipment: Vec::new(),
+            drop_lists: HashMap::new(),
+            stackable: HashSet::new(),
         }
     }
 }
@@ -187,6 +200,12 @@ impl GameData {
                 if let Some(name) = k.strip_prefix("base_stats_") {
                     if v.get("hp_class").is_some() {
                         classes.push(name.to_string());
+                        for a in ["str", "dex", "end", "wis"] {
+                            if let Some(min) = v.get(a).and_then(|r| r.list().first()?.int()) {
+                                gd.class_main
+                                    .insert(name.to_string(), (format!("base_{a}"), min));
+                            }
+                        }
                     } else if v.get("stats_range").is_some() || v.get("str_mod").is_some() {
                         races.push(name.to_string());
                     }
@@ -194,6 +213,26 @@ impl GameData {
             }
             if !classes.is_empty() {
                 gd.classes = classes;
+            }
+            for row in gp.get("starting_equipment").map(Node::list).unwrap_or(&[]) {
+                let (Some(sel), Some(items)) = (row.list().first(), row.list().get(1)) else {
+                    continue;
+                };
+                let Some(sel) = sel.str() else { continue };
+                for it in items.list().iter().filter_map(Node::str) {
+                    gd.starting_equipment
+                        .push((sel.to_string(), it.to_string()));
+                }
+            }
+            for (k, v) in gp.get("drop_lists").map(Node::entries).unwrap_or(&[]) {
+                let l: Vec<String> = v
+                    .list()
+                    .iter()
+                    .filter_map(|n| n.str().map(String::from))
+                    .collect();
+                if !l.is_empty() {
+                    gd.drop_lists.insert(k.clone(), l);
+                }
             }
             if !races.is_empty() {
                 gd.races = races;
@@ -219,6 +258,7 @@ impl GameData {
                     class: s.get("class").and_then(Node::str).unwrap_or("").to_string(),
                     max_level: s.get("max_level").and_then(Node::int).unwrap_or(5),
                     req_class_level: s.get("req_class_level").and_then(Node::int).unwrap_or(1),
+                    is_passive: s.get("is_passive").and_then(Node::int).unwrap_or(0) != 0,
                 });
             }
         }
@@ -255,6 +295,9 @@ impl GameData {
                 continue;
             }
             let int = |f: &str| lookup(id, f).and_then(|n| n.int()).unwrap_or(0);
+            if int("stackable") != 0 {
+                gd.stackable.insert(id.clone());
+            }
             let r = ItemReq {
                 id: id.clone(),
                 name: gd.display(id),
@@ -298,6 +341,100 @@ impl GameData {
 
     pub fn skill(&self, id: &str) -> Option<&SkillInfo> {
         self.skills.iter().find(|s| s.id == id)
+    }
+
+    /// The class's skills, in the game's order.
+    pub fn class_skills(&self, class: &str) -> Vec<&SkillInfo> {
+        self.skills.iter().filter(|s| s.class == class).collect()
+    }
+
+    /// Skills a new hero of `class` gets at level 1 without choosing them.
+    /// Not marked in the game data: Stun Undead says "Starting skill" in its
+    /// description, and fresh Voidcallers have all three auras.
+    pub fn free_skills(&self, class: &str) -> Vec<String> {
+        let ids: &[&str] = match class {
+            "paladin" => &["skill_stun_undead"],
+            "voidcaller" => &[
+                "skill_aura_of_blades",
+                "skill_aura_of_the_void",
+                "skill_aura_of_thorns",
+            ],
+            _ => &[],
+        };
+        ids.iter()
+            .filter(|id| self.skills.iter().any(|s| s.class == class && s.id == **id))
+            .map(|id| id.to_string())
+            .collect()
+    }
+
+    /// What the player picks on the "Choose Starting Skill" screen. For a
+    /// Voidcaller, the choice is which of the free auras starts active.
+    pub fn starter_choices(&self, class: &str) -> Vec<&SkillInfo> {
+        let free = self.free_skills(class);
+        self.class_skills(class)
+            .into_iter()
+            .filter(|s| {
+                if class == "voidcaller" {
+                    free.contains(&s.id)
+                } else {
+                    s.req_class_level <= 1 && !free.contains(&s.id)
+                }
+            })
+            .collect()
+    }
+
+    /// Skill levels a brand-new hero of `class` has (free skills + starting skill).
+    pub fn class_baseline(&self, class: &str) -> i32 {
+        let free = self.free_skills(class).len() as i32;
+        if class == "voidcaller" {
+            free
+        } else {
+            free + 1
+        }
+    }
+
+    /// Items the game hands a new hero of `class` who picked `starter`,
+    /// as (item id, count). Race-only rows are left out; the race doesn't change.
+    pub fn starter_kit(&self, class: &str, starter: &str) -> Vec<(String, i32)> {
+        let mut out: Vec<(String, i32)> = Vec::new();
+        for (sel, spec) in &self.starting_equipment {
+            let t: Vec<&str> = sel.split_whitespace().collect();
+            let any = |i: usize| t.get(i).is_none_or(|x| *x == "*");
+            let class_row = t.first() == Some(&class) && any(1) && any(2);
+            let skill_row = any(0) && any(1) && t.get(2) == Some(&starter);
+            if !(class_row || skill_row) {
+                continue;
+            }
+            for tok in spec.split_whitespace() {
+                let tok = tok.split('%').next().unwrap_or(tok);
+                let (id, n) = match tok.split_once(':') {
+                    Some((id, n)) => {
+                        let n = n
+                            .rsplit('-')
+                            .next()
+                            .and_then(|x| x.parse().ok())
+                            .unwrap_or(1);
+                        (id, n)
+                    }
+                    None => (tok, 1),
+                };
+                let id = match self.drop_lists.get(id) {
+                    Some(pool) => match pool
+                        .iter()
+                        .find(|p| p.starts_with("item_") && !p.contains([' ', ':', '%']))
+                    {
+                        Some(p) => p.as_str(),
+                        None => continue,
+                    },
+                    None => id,
+                };
+                match out.iter_mut().find(|(i, _)| i == id) {
+                    Some((_, c)) => *c += n,
+                    None => out.push((id.to_string(), n)),
+                }
+            }
+        }
+        out
     }
 
     /// Experience needed for `level` (1-based), if known.
