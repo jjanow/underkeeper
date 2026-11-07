@@ -1,0 +1,6 @@
+/target
+*.bak
+# Never commit game data or saves
+*.rfile
+save_*
+player_profile

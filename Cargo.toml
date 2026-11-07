@@ -1,0 +1,23 @@
+[package]
+name = "underkeeper"
+version = "0.1.0"
+edition = "2024"
+description = "Character editor for Underkeep save files"
+license = "MIT"
+repository = "https://github.com/jjanow/underkeeper"
+
+[dependencies]
+dirs = "7.0.0"
+eframe = { version = "0.37.0", default-features = false, features = ["glow", "default_fonts", "wayland", "x11", "accesskit", "clipboard", "links"] }
+rfd = { version = "0.17.2", default-features = false, features = ["xdg-portal"] }
+sysinfo = { version = "0.40.1", default-features = false, features = ["system"] }
+
+[target.'cfg(windows)'.dependencies]
+winreg = "0.55"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"
