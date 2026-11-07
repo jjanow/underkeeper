@@ -13,6 +13,7 @@ WIS-gated rings and amulets).
 - **Gear requirements** view: every item's STR / DEX / END / WIS / class
   requirements, read from your own game install, checked against the selected hero.
   One click raises a hero's stats to meet them.
+- **Updates itself** from this repository's GitHub releases, after asking you.
 - **Backup on every save**, a safety check that refuses to save while the game is
   running, and an **Advanced** tab that exposes every raw field in the hero and party data.
 
@@ -25,6 +26,34 @@ Grab the file for your system from the [Releases](https://github.com/jjanow/unde
 | Windows | `Underkeeper-windows-x64.exe` | Double-click. If SmartScreen complains, choose *More info → Run anyway*. |
 | Linux / Steam Deck | `underkeeper-linux-x64.tar.gz` | Extract, then run `./underkeeper`. |
 | macOS (Intel + Apple Silicon) | `Underkeeper-macos-universal.zip` | Unzip, then right-click `Underkeeper.app` → *Open* the first time (the app isn't notarized). Or run `xattr -dr com.apple.quarantine Underkeeper.app`. |
+
+Version 0.3.0 and later update themselves (see [Updates](#updates)). Older
+versions don't, so download 0.3.0 or later once by hand.
+
+## Updates
+
+At startup Underkeeper asks GitHub for the latest release of this repository.
+Pre-releases and drafts are ignored. If a newer version exists, a bar appears under
+the title with a **What's new** link. Click **Update and restart** to install it,
+or **Later** to hide the bar until next time.
+
+- The update is downloaded for your system and checked against the SHA-256
+  checksum GitHub publishes for that download. If the checksum doesn't match or
+  is missing, nothing is changed.
+- The new version replaces the program in place: the `.exe` on Windows, the
+  `underkeeper` file on Linux, and `Underkeeper.app` on macOS. Then the app
+  restarts into it. Your settings and backups stay where they are.
+- The button is disabled while you have unsaved changes. Save or revert first.
+- The version button at the top right (e.g. `v0.3.0`) has **Check for updates
+  now**, a **Check for updates at startup** toggle, and a link to the Releases page.
+- If the check fails at startup (offline, GitHub unavailable), you won't see an
+  error. A manual check tells you what went wrong.
+- Updating needs write access to the folder the program is in. If the update
+  can't be installed, the bar says why and links to the Releases page so you can
+  download it yourself.
+- **macOS:** move `Underkeeper.app` to your Applications folder (or any folder of your
+  own) before updating. If you run it straight from Downloads without moving it,
+  macOS runs a temporary read-only copy that can't be updated.
 
 ## How to use
 
@@ -95,6 +124,21 @@ cargo build --release
 byte-for-byte. It finds your Underkeep install automatically, or set
 `UNDERKEEP_DIR`. Set `UNDERKEEP_SAVES` to a folder of save files to also test
 editing them.
+
+### Releasing
+
+Push a tag `vX.Y.Z` whose version matches `version` in `Cargo.toml`. CI builds
+all three platforms and publishes a GitHub release with
+`Underkeeper-windows-x64.exe`, `underkeeper-linux-x64.tar.gz` and
+`Underkeeper-macos-universal.zip`. The release job fails if the tag and
+`Cargo.toml` disagree. Without that check, the new build would report the old
+version and keep offering itself as an update. The in-app updater finds these
+exact file names, so keep them as they are.
+
+To test the updater, set `UNDERKEEPER_FAKE_VERSION=0.1.0` to make the app treat
+itself as an old version. Debug builds only check for updates at startup when
+this is set. `cargo test -- --ignored live_update` downloads, verifies and
+installs the latest real release into a temporary folder.
 
 ### Save format
 

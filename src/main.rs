@@ -6,8 +6,10 @@ mod dft;
 mod gamedata;
 mod paths;
 mod save;
+mod update;
 
 fn main() -> eframe::Result {
+    update::cleanup_leftovers();
     let options = eframe::NativeOptions {
         viewport: eframe::egui::ViewportBuilder::default()
             .with_title("Underkeeper")

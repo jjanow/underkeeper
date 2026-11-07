@@ -1,6 +1,6 @@
 [package]
 name = "underkeeper"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
 description = "Character editor for Underkeep save files"
 license = "MIT"
@@ -11,6 +11,9 @@ dirs = "7.0.0"
 eframe = { version = "0.37.0", default-features = false, features = ["glow", "default_fonts", "wayland", "x11", "accesskit", "clipboard", "links"] }
 rfd = { version = "0.17.2", default-features = false, features = ["xdg-portal"] }
 sysinfo = { version = "0.40.1", default-features = false, features = ["system"] }
+ureq = { version = "3.5.1", default-features = false, features = ["rustls", "json"] }
+serde_json = "1.0.154"
+sha2 = "0.11.1"
 
 [target.'cfg(windows)'.dependencies]
 winreg = "0.55"

@@ -3,8 +3,10 @@ use crate::dft::{Doc, Entry, Key, Value};
 use crate::gamedata::{GameData, ItemReq, prettify};
 use crate::paths::{self, SaveDir};
 use crate::save::{self, SaveFile, SaveSummary};
+use crate::update::{self, Release};
 use eframe::egui::{self, Color32, CornerRadius, Margin, RichText, Stroke, ThemePreference, Vec2};
 use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 const ACCENT: Color32 = Color32::from_rgb(0xE2, 0x8A, 0x3B); // ember
@@ -26,6 +28,20 @@ struct PendingClass {
     class: String,
     starter: String,
     give_kit: bool,
+}
+
+/// Self-update progress, shared with the background check/install thread.
+#[derive(Clone)]
+enum UpdateState {
+    Idle,
+    Checking,
+    /// A manual check found nothing newer.
+    UpToDate,
+    Available(Release),
+    Installing(Release),
+    /// Installed; holds what to launch and the new version.
+    Installed(PathBuf, String),
+    Failed(String),
 }
 
 struct Status {
@@ -57,6 +73,9 @@ pub struct App {
     last_proc_check: Instant,
     theme: ThemePreference,
     backup_dir: PathBuf,
+    update: Arc<Mutex<UpdateState>>,
+    update_dismissed: bool,
+    auto_update_check: bool,
 }
 
 fn settings_path() -> Option<PathBuf> {
@@ -219,7 +238,15 @@ impl App {
                 .unwrap_or_else(std::env::temp_dir)
                 .join("underkeeper")
                 .join("backups"),
+            update: Arc::new(Mutex::new(UpdateState::Idle)),
+            update_dismissed: false,
+            auto_update_check: load_setting("check_updates").as_deref() != Some("false"),
         };
+        // Debug builds (cargo run) don't check on their own unless testing the updater.
+        let testing = std::env::var_os("UNDERKEEPER_FAKE_VERSION").is_some();
+        if app.auto_update_check && (!cfg!(debug_assertions) || testing) {
+            app.start_update_check(&cc.egui_ctx, false);
+        }
         app.rescan_dirs();
         // For screenshots/testing: open a save and tab directly.
         if let Ok(p) = std::env::var("UNDERKEEPER_OPEN") {
@@ -250,6 +277,174 @@ impl App {
             app.add_custom_dir(custom);
         }
         app
+    }
+
+    fn update_state(&self) -> UpdateState {
+        self.update
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
+    }
+
+    fn set_update_state(&self, st: UpdateState) {
+        *self.update.lock().unwrap_or_else(|e| e.into_inner()) = st;
+    }
+
+    fn start_update_check(&mut self, ctx: &egui::Context, manual: bool) {
+        if matches!(
+            self.update_state(),
+            UpdateState::Checking | UpdateState::Installing(_) | UpdateState::Installed(..)
+        ) {
+            return;
+        }
+        self.update_dismissed = false;
+        self.set_update_state(UpdateState::Checking);
+        let shared = self.update.clone();
+        let ctx = ctx.clone();
+        std::thread::spawn(move || {
+            // Automatic checks fail silently (offline, rate-limited); manual ones say why.
+            let next = match update::check(&update::current_version()) {
+                Ok(Some(rel)) => UpdateState::Available(rel),
+                Ok(None) if manual => UpdateState::UpToDate,
+                Err(e) if manual => UpdateState::Failed(e),
+                _ => UpdateState::Idle,
+            };
+            *shared.lock().unwrap_or_else(|e| e.into_inner()) = next;
+            ctx.request_repaint();
+        });
+    }
+
+    fn start_install(&mut self, ctx: &egui::Context, rel: Release) {
+        let target = match update::install_target() {
+            Ok(t) => t,
+            Err(e) => return self.set_update_state(UpdateState::Failed(e)),
+        };
+        self.set_update_state(UpdateState::Installing(rel.clone()));
+        let shared = self.update.clone();
+        let ctx = ctx.clone();
+        std::thread::spawn(move || {
+            let next = match update::install(&rel, &target) {
+                Ok(launch) => UpdateState::Installed(launch, rel.version),
+                Err(e) => UpdateState::Failed(e),
+            };
+            *shared.lock().unwrap_or_else(|e| e.into_inner()) = next;
+            ctx.request_repaint();
+        });
+    }
+
+    /// Restarts into an installed update once nothing unsaved would be lost.
+    fn finish_update(&mut self) {
+        let UpdateState::Installed(launch, _) = self.update_state() else {
+            return;
+        };
+        if self.save.as_ref().is_some_and(|s| s.is_dirty()) {
+            return;
+        }
+        match update::relaunch(&launch) {
+            Ok(()) => std::process::exit(0),
+            Err(e) => self.set_update_state(UpdateState::Failed(e)),
+        }
+    }
+
+    fn update_banner_visible(&self) -> bool {
+        match self.update_state() {
+            UpdateState::Available(_) | UpdateState::Failed(_) => !self.update_dismissed,
+            UpdateState::Installing(_) | UpdateState::Installed(..) => true,
+            _ => false,
+        }
+    }
+
+    fn update_banner(&mut self, ui: &mut egui::Ui) {
+        let dirty = self.save.as_ref().is_some_and(|s| s.is_dirty());
+        ui.horizontal_wrapped(|ui| match self.update_state() {
+            UpdateState::Available(rel) => {
+                ui.label(
+                    RichText::new(format!("Underkeeper {} is available", rel.version))
+                        .strong()
+                        .color(ACCENT),
+                );
+                ui.label(RichText::new(format!("(you have {})", update::current_version())).weak());
+                ui.hyperlink_to("What's new", &rel.page_url);
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui.button("Later").clicked() {
+                        self.update_dismissed = true;
+                    }
+                    let btn = egui::Button::new(
+                        RichText::new("Update and restart")
+                            .strong()
+                            .color(Color32::WHITE),
+                    )
+                    .fill(if dirty {
+                        Color32::from_gray(90)
+                    } else {
+                        ACCENT_DARK
+                    });
+                    if ui
+                        .add_enabled(!dirty, btn)
+                        .on_disabled_hover_text("Save or revert your changes first.")
+                        .clicked()
+                    {
+                        self.start_install(ui.ctx(), rel.clone());
+                    }
+                });
+            }
+            UpdateState::Installing(rel) => {
+                ui.spinner();
+                ui.label(format!(
+                    "Downloading and installing Underkeeper {}…",
+                    rel.version
+                ));
+            }
+            UpdateState::Installed(_, version) => {
+                ui.label(
+                    RichText::new(format!("Underkeeper {version} is installed."))
+                        .strong()
+                        .color(OK_GREEN),
+                );
+                ui.label("Save or revert your changes and it will restart into the new version.");
+            }
+            UpdateState::Failed(e) => {
+                ui.label(RichText::new(format!("Update failed: {e}")).color(BAD_RED));
+                ui.hyperlink_to("Releases page", update::RELEASES_URL);
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui.button("Dismiss").clicked() {
+                        self.update_dismissed = true;
+                    }
+                });
+            }
+            _ => {}
+        });
+    }
+
+    fn update_menu(&mut self, ui: &mut egui::Ui) {
+        ui.menu_button(format!("v{}", update::current_version()), |ui| {
+            ui.label(RichText::new(format!("Underkeeper {}", update::current_version())).strong());
+            ui.separator();
+            let checking = matches!(self.update_state(), UpdateState::Checking);
+            if ui
+                .add_enabled(!checking, egui::Button::new("Check for updates now"))
+                .clicked()
+            {
+                self.start_update_check(ui.ctx(), true);
+                ui.close();
+            }
+            if ui
+                .checkbox(&mut self.auto_update_check, "Check for updates at startup")
+                .changed()
+            {
+                store_setting(
+                    "check_updates",
+                    if self.auto_update_check {
+                        "true"
+                    } else {
+                        "false"
+                    },
+                );
+            }
+            ui.hyperlink_to("Releases page", update::RELEASES_URL);
+        })
+        .response
+        .on_hover_text("Version and updates");
     }
 
     fn set_status(&mut self, text: impl Into<String>, error: bool) {
@@ -403,6 +598,7 @@ impl App {
             );
             ui.label(RichText::new("character editor for Underkeep").weak());
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                self.update_menu(ui);
                 let before = self.theme;
                 egui::ComboBox::from_id_salt("theme")
                     .selected_text(match self.theme {
@@ -1612,10 +1808,26 @@ impl eframe::App for App {
         {
             self.status = None;
         }
+        match self.update_state() {
+            UpdateState::UpToDate => {
+                self.set_update_state(UpdateState::Idle);
+                let v = update::current_version();
+                self.set_status(format!("You have the latest version ({v})."), false);
+            }
+            UpdateState::Installed(..) => self.finish_update(),
+            _ => {}
+        }
 
         egui::Panel::top("top")
             .frame(egui::Frame::side_top_panel(ui.style()).inner_margin(Margin::symmetric(14, 10)))
             .show(ui, |ui| self.top_bar(ui));
+        if self.update_banner_visible() {
+            egui::Panel::top("update")
+                .frame(
+                    egui::Frame::side_top_panel(ui.style()).inner_margin(Margin::symmetric(14, 8)),
+                )
+                .show(ui, |ui| self.update_banner(ui));
+        }
         egui::Panel::bottom("bottom")
             .frame(egui::Frame::side_top_panel(ui.style()).inner_margin(Margin::symmetric(14, 6)))
             .show(ui, |ui| self.bottom_bar(ui));
