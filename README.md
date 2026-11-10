@@ -8,8 +8,9 @@ WIS-gated rings and amulets).
 
 - Single self-contained program for **Windows, Linux and macOS**. Nothing to install.
 - Modern GUI with **dark and light mode** (follows your system by default).
+- Works with the **Steam and GOG** versions of the game.
 - Finds your saves automatically: Windows, Linux (native Steam, Flatpak, Snap,
-  Proton) and macOS (CrossOver / Whisky bottles).
+  Proton) and macOS (CrossOver / Whisky bottles), including GOG Galaxy saves.
 - **Gear requirements** view: every item's STR / DEX / END / WIS / class
   requirements, read from your own game install, checked against the selected hero.
   One click raises a hero's stats to meet them.
@@ -44,7 +45,7 @@ or **Later** to hide the bar until next time.
   `underkeeper` file on Linux, and `Underkeeper.app` on macOS. Then the app
   restarts into it. Your settings and backups stay where they are.
 - The button is disabled while you have unsaved changes. Save or revert first.
-- The version button at the top right (e.g. `v0.3.0`) has **Check for updates
+- The version button at the top right (e.g. `v0.4.0`) has **Check for updates
   now**, a **Check for updates at startup** toggle, and a link to the Releases page.
 - If the check fails at startup (offline, GitHub unavailable), you won't see an
   error. A manual check tells you what went wrong.
@@ -62,14 +63,16 @@ or **Later** to hide the bar until next time.
 3. Pick a save, pick a hero, change what you want.
 4. Click **Save changes**. The original file is backed up first. Use the
    **Backups** button to find the backups.
-5. Start the game from Steam and load that save.
+5. Start the game from Steam or GOG Galaxy and load that save.
 
-### Steam Cloud
+### Steam Cloud and GOG Galaxy cloud saves
 
-Underkeep keeps its saves in Steam Cloud. When you edit a save while the game
-is closed, Steam notices the change at the next launch and uploads your edited
-file. If Steam ever shows a **Cloud Conflict** dialog, choose the **local** files
-(the ones on this computer), or your edits will be replaced by the cloud copy.
+Underkeep keeps its saves in Steam Cloud (or GOG Galaxy's cloud saves for the GOG
+version). When you edit a save while the game is closed, the launcher notices the
+change at the next launch and uploads your edited file. If Steam shows a
+**Cloud Conflict** dialog, or GOG Galaxy asks which saves to keep, choose the
+**local** files (the ones on this computer), or your edits will be replaced by the
+cloud copy.
 
 ## Where the saves are
 
@@ -78,10 +81,21 @@ The editor looks in all of these on its own. Use **Choose folder…** if yours i
 | Setup | Folder |
 |---|---|
 | Windows | `C:\Program Files (x86)\Steam\userdata\<your id>\2411200\remote` |
+| Windows, GOG | `%LocalAppData%\GOG.com\Galaxy\Applications\<game id>\Storage\Shared\Files` (the game id is a long number, e.g. `60010286278343253`) |
 | Linux / Steam Deck (incl. Proton) | `~/.steam/steam/userdata/<your id>/2411200/remote` |
 | Linux, Flatpak Steam | `~/.var/app/com.valvesoftware.Steam/.local/share/Steam/userdata/<your id>/2411200/remote` |
 | macOS (CrossOver) | `~/Library/Application Support/CrossOver/Bottles/<bottle>/drive_c/Program Files (x86)/Steam/userdata/<your id>/2411200/remote` |
 | macOS (Whisky) | `~/Library/Containers/com.isaacmarovitz.Whisky/Bottles/<bottle>/drive_c/Program Files (x86)/Steam/userdata/<your id>/2411200/remote` |
+| GOG in a Wine bottle (CrossOver, Whisky, Heroic, Bottles) | `<bottle>/drive_c/users/<user>/AppData/Local/GOG.com/Galaxy/Applications/<game id>/Storage/Shared/Files` |
+
+To paste the GOG folder into Windows Explorer's address bar, use
+`%LocalAppData%\GOG.com\Galaxy\Applications` and open the numbered folder
+that has `Storage\Shared\Files` with `save_…` files in it.
+
+The game install (used for item names and the **Gear requirements** view) is
+also found for both versions: Steam libraries, GOG Galaxy's registry entries,
+`C:\Program Files (x86)\GOG Galaxy\Games\Underkeep` and Heroic's
+`~/Games/Heroic/Underkeep`. If it isn't found, use **Set game folder…**.
 
 Files are named `save_1`, `save_2`, … plus `save_auto` and `save_quick`.
 
