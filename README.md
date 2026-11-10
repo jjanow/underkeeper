@@ -142,10 +142,9 @@ editing them.
 ### Releasing
 
 Bump `version` in `Cargo.toml`, commit, and push the commit together with a tag
-`vX.Y.Z` that matches it (`git push origin main vX.Y.Z`). Pushes to `main` only
-run the tests; the full three-platform build runs for tags, pull requests and
-manual runs, so a release is built once. CI builds
-all three platforms and publishes a GitHub release with
+`vX.Y.Z` that matches it (`git push origin main vX.Y.Z`). Pushes to `main` don't
+start CI. It runs only for tags, pull requests and manual runs, so a release is
+tested and built once. CI builds all three platforms and publishes a GitHub release with
 `Underkeeper-windows-x64.exe`, `underkeeper-linux-x64.tar.gz` and
 `Underkeeper-macos-universal.zip`. The release job fails if the tag and
 `Cargo.toml` disagree. Without that check, the new build would report the old
