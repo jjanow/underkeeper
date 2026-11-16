@@ -3,7 +3,7 @@
 //! Edits go straight into the DfT tree, so fields the editor doesn't know
 //! about are carried through untouched.
 
-use crate::dft::{Doc, Entry, Key, Value};
+use crate::dft::{self, Doc, Entry, Key, Value};
 use std::path::{Path, PathBuf};
 
 pub struct SaveFile {
@@ -119,6 +119,12 @@ impl SaveFile {
         let original =
             std::fs::read(path).map_err(|e| format!("can't read {}: {e}", path.display()))?;
         let doc = Doc::parse(&original).map_err(|e| format!("{}: {e}", path.display()))?;
+        check_exact(&doc, &original).map_err(|e| {
+            format!(
+                "{}: {e}",
+                path.file_name().unwrap_or_default().to_string_lossy()
+            )
+        })?;
         let modified = std::fs::metadata(path)
             .and_then(|m| m.modified())
             .unwrap_or(std::time::UNIX_EPOCH);
@@ -127,6 +133,21 @@ impl SaveFile {
             doc,
             original,
             modified,
+        })
+    }
+
+    /// Set when the save's format version isn't one the editor was built for.
+    /// The save still opened (it writes back byte-for-byte), but the game may
+    /// have changed what the fields mean.
+    pub fn format_warning(&self) -> Option<String> {
+        (self.doc.version != dft::KNOWN_VERSION).then(|| {
+            format!(
+                "This save uses format version {} (Underkeeper knows version {}). \
+                 It reads and writes back unchanged, but a game update may have changed it. \
+                 Check for an Underkeeper update, and keep the backup until an edited save loads in the game.",
+                self.doc.version,
+                dft::KNOWN_VERSION
+            )
         })
     }
 
@@ -561,6 +582,25 @@ fn renumber(list: &mut [Entry]) {
         }
     }
 }
+/// Refuses a save the editor can't write back byte-for-byte. Editing such a
+/// file would silently change parts of it the editor doesn't understand
+/// (most likely after a game update changed the save format).
+fn check_exact(doc: &Doc, original: &[u8]) -> Result<(), String> {
+    let out = doc.to_bytes();
+    if out == original {
+        return Ok(());
+    }
+    let at = out
+        .iter()
+        .zip(original)
+        .position(|(a, b)| a != b)
+        .unwrap_or(out.len().min(original.len()));
+    Err(format!(
+        "Underkeeper can't read this save exactly (it differs at byte {at}), \
+         so it won't edit it. A game update may have changed the save format. \
+         Check for an Underkeeper update."
+    ))
+}
 
 /// Write `data` to `path` safely: back up the current file into
 /// `backup_dir`, write a temp file next to the target, then rename it over.
@@ -614,6 +654,61 @@ pub fn chrono_like_stamp() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn sample_save() -> Vec<u8> {
+        // Header, strings ["heroes", "name", "Ada"], root { heroes: [ { name: "Ada" } ] }.
+        let mut b = Vec::new();
+        b.extend_from_slice(&dft::MAGIC);
+        b.extend_from_slice(&dft::KNOWN_VERSION.to_le_bytes());
+        b.extend_from_slice(&3u32.to_le_bytes());
+        for s in ["heroes", "name", "Ada"] {
+            b.push(s.len() as u8);
+            b.extend_from_slice(s.as_bytes());
+        }
+        b.extend_from_slice(&1u32.to_le_bytes());
+        b.extend_from_slice(&[0, 0, 4]); // heroes: table
+        b.extend_from_slice(&1u32.to_le_bytes());
+        b.extend_from_slice(&[1, 0, 4]); // [0]: table
+        b.extend_from_slice(&1u32.to_le_bytes());
+        b.extend_from_slice(&[0, 1, 3, 2]); // name: "Ada"
+        b
+    }
+
+    fn temp_file(name: &str, bytes: &[u8]) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("underkeeper-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let p = dir.join(name);
+        std::fs::write(&p, bytes).unwrap();
+        p
+    }
+
+    #[test]
+    fn known_version_opens_without_warning() {
+        let f = SaveFile::open(&temp_file("save_known", &sample_save())).unwrap();
+        assert_eq!(f.format_warning(), None);
+        assert!(!f.is_dirty());
+    }
+
+    #[test]
+    fn unknown_version_opens_with_warning() {
+        let mut b = sample_save();
+        b[4..8].copy_from_slice(&2u32.to_le_bytes());
+        let f = SaveFile::open(&temp_file("save_v2", &b)).unwrap();
+        let w = f.format_warning().expect("warning for version 2");
+        assert!(w.contains("version 2"), "{w}");
+        assert!(!f.is_dirty());
+    }
+
+    #[test]
+    fn inexact_save_is_refused() {
+        let b = sample_save();
+        let mut doc = Doc::parse(&b).unwrap();
+        assert!(check_exact(&doc, &b).is_ok());
+        // Stand-in for a format detail the codec doesn't preserve.
+        doc.len_widths[0] = 2;
+        let e = check_exact(&doc, &b).unwrap_err();
+        assert!(e.contains("won't edit it"), "{e}");
+    }
 
     /// Runs against real saves in $UNDERKEEP_SAVES (skipped if unset):
     /// unchanged round-trip, then a set of edits that must survive re-parsing.

@@ -110,6 +110,10 @@ Files are named `save_1`, `save_2`, … plus `save_auto` and `save_quick`.
 
 Notes:
 
+- Underkeeper only edits a save it can write back byte-for-byte. If a game
+  update changes the save format in a way it doesn't understand, it refuses to
+  open the save rather than risk damaging it. A save with a newer format version
+  that it can still read exactly opens with a warning.
 - Attributes are the hero's **base** values. Gear such as a Ring of Wisdom adds on top in game.
 - Maximum health, mana and stamina are calculated by the game from class, level
   and attributes, so they aren't stored in the save. Raising Endurance or Wisdom raises them.

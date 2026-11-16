@@ -23,6 +23,10 @@ use std::fmt;
 
 pub const MAGIC: [u8; 4] = [0xFF, b'D', b'f', b'T'];
 
+/// The only format version the game has written so far (header field after
+/// the magic). Other versions are opened with a warning, if they round-trip.
+pub const KNOWN_VERSION: u32 = 1;
+
 #[derive(Debug)]
 pub struct Error(pub String);
 

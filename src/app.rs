@@ -505,14 +505,16 @@ impl App {
                     return;
                 }
                 self.hero = self.hero.min(f.hero_count() - 1);
+                let warning = f.format_warning();
                 self.save = Some(f);
-                self.set_status(
-                    format!(
-                        "Opened {}",
-                        path.file_name().unwrap_or_default().to_string_lossy()
+                let name = path.file_name().unwrap_or_default().to_string_lossy();
+                match warning {
+                    Some(_) => self.set_status(
+                        format!("Opened {name}, but its format version is new to Underkeeper."),
+                        true,
                     ),
-                    false,
-                );
+                    None => self.set_status(format!("Opened {name}"), false),
+                }
             }
             Err(e) => self.set_status(e, true),
         }
@@ -1033,6 +1035,9 @@ impl App {
                 ui.label("Coins");
             });
         });
+        if let Some(w) = s.format_warning() {
+            ui.label(RichText::new(w).color(ACCENT));
+        }
         ui.add_space(6.0);
 
         // Hero picker
