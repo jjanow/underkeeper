@@ -1,6 +1,6 @@
 use crate::classchange;
 use crate::dft::{Doc, Entry, Key, Value};
-use crate::gamedata::{GameData, ItemReq, prettify};
+use crate::gamedata::{GameData, ItemReq, TraitKind, prettify};
 use crate::paths::{self, SaveDir};
 use crate::save::{self, SaveFile, SaveSummary};
 use crate::update::{self, Release};
@@ -1436,54 +1436,85 @@ fn skills_tab(
     card(ui, |ui| {
         section_title(ui, "Traits");
         ui.label(
-            RichText::new("Racial traits and mutations. Click x to remove one.")
-                .small()
-                .weak(),
+            RichText::new(
+                "Racial traits and mutations. Click x to remove one. A mutation's effect \
+                 is fixed by the game, so there's no strength to set.",
+            )
+            .small()
+            .weak(),
         );
-        ui.add_space(4.0);
         let traits = s.traits(h);
         let mut remove = None;
-        ui.horizontal_wrapped(|ui| {
-            for t in &traits {
-                egui::Frame::new()
-                    .fill(ui.visuals().faint_bg_color)
-                    .corner_radius(CornerRadius::same(12))
-                    .inner_margin(Margin::symmetric(10, 4))
-                    .show(ui, |ui| {
-                        ui.horizontal(|ui| {
-                            ui.label(gd.display(t)).on_hover_text(t.as_str());
-                            if ui.small_button("x").clicked() {
-                                remove = Some(t.clone());
-                            }
+        for (kind, title) in TRAIT_GROUPS {
+            let group: Vec<&String> = traits.iter().filter(|t| gd.trait_kind(t) == kind).collect();
+            if group.is_empty() {
+                continue;
+            }
+            ui.add_space(6.0);
+            ui.label(RichText::new(title).strong().color(trait_color(kind)));
+            ui.horizontal_wrapped(|ui| {
+                for t in group {
+                    egui::Frame::new()
+                        .fill(ui.visuals().faint_bg_color)
+                        .stroke(egui::Stroke::new(
+                            1.0,
+                            trait_color(kind).gamma_multiply(0.6),
+                        ))
+                        .corner_radius(CornerRadius::same(12))
+                        .inner_margin(Margin::symmetric(10, 4))
+                        .show(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                ui.label(gd.display(t)).on_hover_text(t.as_str());
+                                if ui.small_button("x").clicked() {
+                                    remove = Some(t.clone());
+                                }
+                            });
                         });
-                    });
-            }
-            if traits.is_empty() {
-                ui.label(RichText::new("No traits").weak());
-            }
-        });
+                }
+            });
+        }
+        if traits.is_empty() {
+            ui.add_space(4.0);
+            ui.label(RichText::new("No traits").weak());
+        }
         if let Some(t) = remove {
             s.remove_trait(h, &t);
         }
         if !gd.traits.is_empty() {
-            ui.add_space(6.0);
+            ui.add_space(8.0);
             ui.horizontal(|ui| {
                 egui::ComboBox::from_id_salt("addtrait")
-                    .width(240.0)
+                    .width(260.0)
+                    .height(420.0)
                     .selected_text(if trait_pick.is_empty() {
-                        "Choose a trait…".to_string()
+                        "Choose a trait or mutation…".to_string()
                     } else {
                         gd.display(trait_pick)
                     })
                     .show_ui(ui, |ui| {
-                        for t in &gd.traits {
-                            if !traits.contains(t) {
+                        for (kind, title) in TRAIT_GROUPS {
+                            let options: Vec<&String> = gd
+                                .traits
+                                .iter()
+                                .filter(|t| gd.trait_kind(t) == kind && !traits.contains(t))
+                                .collect();
+                            if options.is_empty() {
+                                continue;
+                            }
+                            ui.label(
+                                RichText::new(title)
+                                    .small()
+                                    .strong()
+                                    .color(trait_color(kind)),
+                            );
+                            for t in options {
                                 ui.selectable_value(trait_pick, t.clone(), gd.display(t));
                             }
+                            ui.separator();
                         }
                     });
                 if ui
-                    .add_enabled(!trait_pick.is_empty(), egui::Button::new("Add trait"))
+                    .add_enabled(!trait_pick.is_empty(), egui::Button::new("Add"))
                     .clicked()
                 {
                     s.add_trait(h, trait_pick);
@@ -1492,6 +1523,20 @@ fn skills_tab(
             });
         }
     });
+}
+
+const TRAIT_GROUPS: [(TraitKind, &str); 3] = [
+    (TraitKind::Racial, "Racial traits"),
+    (TraitKind::Stable, "Stable mutations (good)"),
+    (TraitKind::Unstable, "Unstable mutations (bad)"),
+];
+
+fn trait_color(kind: TraitKind) -> Color32 {
+    match kind {
+        TraitKind::Racial => Color32::from_gray(150),
+        TraitKind::Stable => OK_GREEN,
+        TraitKind::Unstable => BAD_RED,
+    }
 }
 
 fn req_value(i: &ItemReq, short: &str) -> i32 {

@@ -94,12 +94,25 @@ pub struct ItemReq {
     pub req_class_level: i32,
 }
 
+/// What kind of trait a `trait_*` status effect is, as the game labels it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TraitKind {
+    /// Racial traits (and anything the game doesn't mark as a mutation).
+    Racial,
+    /// "Stable Mutation": the good ones.
+    Stable,
+    /// "Unstable Mutation": the bad ones.
+    Unstable,
+}
+
 #[derive(Clone, Debug)]
 pub struct GameData {
     pub classes: Vec<String>,
     pub races: Vec<String>,
     pub skills: Vec<SkillInfo>,
     pub traits: Vec<String>,
+    /// Mutations by kind; traits missing here are racial.
+    pub trait_kinds: HashMap<String, TraitKind>,
     pub items: Vec<ItemReq>,
     /// Total experience needed to reach level index+1.
     pub exp_levels: Vec<i32>,
@@ -135,6 +148,7 @@ impl Default for GameData {
                 .to_vec(),
             skills: Vec::new(),
             traits: Vec::new(),
+            trait_kinds: HashMap::new(),
             items: Vec::new(),
             exp_levels: Vec::new(),
             text: HashMap::new(),
@@ -240,12 +254,29 @@ impl GameData {
         }
 
         if let Some(se) = main.get("status_effects") {
-            gd.traits = se
-                .entries()
-                .iter()
-                .map(|(k, _)| k.clone())
-                .filter(|k| k.starts_with("trait_"))
-                .collect();
+            for (k, v) in se.entries() {
+                if !k.starts_with("trait_") {
+                    continue;
+                }
+                let icon = v.get("icon").and_then(Node::str).unwrap_or("");
+                let label = gd
+                    .text
+                    .get(&format!("stats_status_effect_{k}"))
+                    .map(String::as_str)
+                    .unwrap_or("");
+                // The stats-screen name carries the mutation symbol; not every
+                // mutation has the icon in its definition, so check both.
+                let marked = |kind: &str| {
+                    let sym = format!("hud_symbol_trait_mutation_{kind}");
+                    label.contains(&sym) || icon == sym
+                };
+                if marked("positive") {
+                    gd.trait_kinds.insert(k.clone(), TraitKind::Stable);
+                } else if marked("negative") {
+                    gd.trait_kinds.insert(k.clone(), TraitKind::Unstable);
+                }
+                gd.traits.push(k.clone());
+            }
         }
 
         if let Some(sk) = load(&base.join("def_def_skill.txt.rfile")) {
@@ -337,6 +368,13 @@ impl GameData {
             }
         }
         prettify(id)
+    }
+
+    pub fn trait_kind(&self, id: &str) -> TraitKind {
+        self.trait_kinds
+            .get(id)
+            .copied()
+            .unwrap_or(TraitKind::Racial)
     }
 
     pub fn skill(&self, id: &str) -> Option<&SkillInfo> {
@@ -448,5 +486,32 @@ impl GameData {
         } else {
             self.exp_levels.len() as i32
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Runs against the local game install (skipped if none is found).
+    #[test]
+    fn mutations_are_classified() {
+        let Some(dir) = crate::paths::find_game_dir() else {
+            return;
+        };
+        let gd = GameData::load(&dir).unwrap();
+        let count = |k| gd.traits.iter().filter(|t| gd.trait_kind(t) == k).count();
+        let (racial, stable, unstable) = (
+            count(TraitKind::Racial),
+            count(TraitKind::Stable),
+            count(TraitKind::Unstable),
+        );
+        eprintln!("racial {racial}, stable {stable}, unstable {unstable}");
+        assert_eq!(racial + stable + unstable, gd.traits.len());
+        assert!(stable > 0 && unstable > 0);
+        // Marked in the text only, not by an icon in its definition.
+        assert_eq!(gd.trait_kind("trait_acid_blood"), TraitKind::Stable);
+        assert_eq!(gd.trait_kind("trait_allergic_to_ice"), TraitKind::Unstable);
+        assert_eq!(gd.trait_kind("trait_twisted_blood"), TraitKind::Racial);
     }
 }

@@ -104,7 +104,7 @@ Files are named `save_1`, `save_2`, … plus `save_auto` and `save_quick`.
 | Tab | Fields |
 |---|---|
 | Stats | Name, class, race, Strength, Dexterity, Endurance, Wisdom, level, experience, skill points, current health / mana / stamina / zeal, party coins |
-| Skills & traits | Every skill level (up to the game's max), add missing class skills, add or remove racial traits and mutations |
+| Skills & traits | Every skill level (up to the game's max), add missing class skills, add or remove racial traits and mutations (grouped into racial traits, stable mutations and unstable mutations) |
 | Gear requirements | All items with requirements, highlighted for the selected hero. *Meet every stat requirement* raises each attribute to the highest value any item needs. |
 | Advanced | Every raw value stored for the hero and the party |
 
@@ -114,6 +114,8 @@ Notes:
   update changes the save format in a way it doesn't understand, it refuses to
   open the save rather than risk damaging it. A save with a newer format version
   that it can still read exactly opens with a warning.
+- Mutations are on or off. The game builds each mutation's effect in (for example,
+  Crystal Chitin always reflects 5%), so there's no strength to edit.
 - Attributes are the hero's **base** values. Gear such as a Ring of Wisdom adds on top in game.
 - Maximum health, mana and stamina are calculated by the game from class, level
   and attributes, so they aren't stored in the save. Raising Endurance or Wisdom raises them.

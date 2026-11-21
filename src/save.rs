@@ -500,6 +500,7 @@ impl SaveFile {
             new_int_entry(&mut self.doc, "duration", -1),
             new_int_entry(&mut self.doc, "power", 0),
             new_int_entry(&mut self.doc, "level", 1),
+            new_int_entry(&mut self.doc, "stack_count", 0),
         ];
         push_list(&mut self.doc, &p, entry);
     }
@@ -730,6 +731,7 @@ mod tests {
                     f.set_skill_level(h, id, 3);
                 }
                 f.add_trait(h, "trait_more_exp");
+                f.add_trait(h, "trait_crystal_chitin");
                 if let Some(t) = f.traits(h).first().cloned() {
                     f.remove_trait(h, &t);
                 }
